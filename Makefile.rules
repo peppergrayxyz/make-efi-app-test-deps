@@ -1,0 +1,59 @@
+
+.PHONY=FORCE
+FORCE:
+
+$(SRC):
+	git clone $(REPO) $@
+
+$(BUILD)/%$(BUILDIR)/.git-worktree: $(SRC)
+	git -C $(SRC) worktree add $(shell pwd)/$(@D) $*
+	touch $@
+
+$(BUILD)/%$(BUILDIR)/Makefile:
+	mkdir -p $(@D) && cd $(@D) && ls && [ -f ./configure ] && ./configure $(CONFARGS)
+
+$(BUILD)/%/$(ARCH)/.done:
+	@$(MAKE) $(BUILD)/$*$(BUILDIR)/.git-worktree
+	@$(MAKE) $(BUILD)/$*$(BUILDIR)/Makefile
+	$(MAKE) -C $(BUILD)/$*$(BUILDIR) -j $(JOBS) $(MAKEARGS)
+	@touch $@
+
+$(INSTALL)/%/$(ARCH): 
+	$(MAKE) -C $(BUILD)/$*$(BUILDIR) install DESTDIR=$(shell pwd)/$@ $(INSTARGS)
+
+$(PACKAGE)/$(TARGET)_%_$(ARCH).tar.xz: 
+	@mkdir -p $(@D)
+	tar -C $(INSTALL)/$*/$(ARCH)/ . -c -f - | xz -z -T $(JOBS) - > $@
+
+build/%: FORCE
+	@echo "$@ $(ARCH)"
+	@$(MAKE) $(BUILD)/$*/$(ARCH)/.done
+	@$(MAKE) $(INSTALL)/$*/$(ARCH)
+	@$(MAKE) $(PACKAGE)/$(TARGET)_$*_$(ARCH).tar.xz
+
+remove-src/%: FORCE
+	if [ -d $(BUILD)/$*$(BUILDIR) ]; then \
+	git -C $(SRC) worktree remove --force $(shell pwd)/$(BUILD)/$*$(BUILDIR); \
+	fi
+	rm -rf $(BUILD)/$*$(BUILDIR)
+
+clean/%: FORCE
+	@if [ -f $(BUILD)/$*$(BUILDIR)/Makefile ]; then $(MAKE) -C $(BUILD)/$*$(BUILDIR) $(CLEAN); fi
+	@if [ -n "$(BUILDIR)" ]; then $(MAKE) remove-src/$*; fi
+	@rm -rvf $(BUILD)/$*/$(ARCH)
+	@rm -rvf $(INSTALL)/$*
+	@rm -vf $(PACKAGE)/$(TARGET)_$*_$(ARCH).tar.xz
+
+.PHONY=clean
+clean: $(shell if [ -d $(BUILD) ]; then find $(BUILD) -mindepth 1 -maxdepth 1 -type d -printf 'clean/%f\n'; fi)
+
+fresh/%: FORCE
+	$(MAKE) clean/$*
+	$(MAKE) build/$*
+
+.PHONY=nuke
+nuke:
+	@rm -rvf $(SRC) $(BUILD) $(INSTALL) $(PACKAGE)
+
+.PHONY=all
+all: $(TARGETS)
