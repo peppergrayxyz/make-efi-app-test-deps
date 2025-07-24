@@ -1,0 +1,99 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      target: {type: string, default: '.'}
+
+permissions:
+  contents: write
+
+jobs:
+  generate-variants:
+    name: Generate variants
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Load targets.json and expose as matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="${{ inputs.target }}/targets.json"
+          if [[ ! -f "$file" ]]; then
+            echo "error: $file not found"
+            exit 1
+          fi
+          echo "matrix=$(cat "$file" | jq -c)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build asset
+    needs: generate-variants
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-variants.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if asset exists
+        id: probe
+        run: |
+          set -euo pipefail
+          target="${{ inputs.target }}"
+          artifcat="${target}_${{ matrix.ref }}_${{ matrix.arch }}.tar.xz"
+          echo "check $target/$artifcat:"
+          if gh release view $target --json assets --jq ".assets[].name" | \
+            grep -Fxq "$artifcat"
+          then
+            echo "found"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "not found"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+  
+      - name: Enable QEMU
+        if: steps.probe.outputs.skip == 'false'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/${{ matrix.arch }}
+
+      - name: Run CI inside ${{ inputs.image }}
+        if: steps.probe.outputs.skip == 'false'
+        uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: ${{ matrix.arch }}
+          distro: debian
+          base_image: |
+            --platform=linux/${{ matrix.arch == 'loongarch64' && 'loong64' || matrix.arch }} \
+            ${{ matrix.arch == 'loongarch64' && 'ghcr.io/loong64/debian:trixie-slim' || 'debian:trixie-slim' }}
+          install: |
+            apt update
+            apt install -y build-essential binutils git tar xz-utils ${{ matrix.deps }}
+          run: |
+            set -e
+            ARCH="${{ matrix.arch }}"
+            [ "$ARCH" = "x86_64" ] && [ "${{ matrix.arch }}" = "i386" ] && ARCH=i386
+            make ${{ inputs.target }}/${{ matrix.ref }} ARCH="$ARCH" JOBS=1
+
+      - name: Upload asset
+        if: steps.probe.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          TARGET="${{ inputs.target }}"
+          REF="${{ matrix.ref }}"
+          ARCH="${{ matrix.arch }}"
+          RELEASE_TAG="$TARGET"
+          ASSET_PATH="${TARGET}/package/${TARGET}_${REF}_${ARCH}.tar.xz"
+
+          # Create the release if not exists
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --title "$TARGET" --notes "Automated release for $TARGET"
+
+          # Upload (or replace) the asset
+          gh release upload "$RELEASE_TAG" "$ASSET_PATH" --clobber

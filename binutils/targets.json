@@ -1,0 +1,5 @@
+{
+  "arch" : [ "x86_64", "i386", "arm", "aarch64", "riscv64", "loongarch64" ],
+  "ref"  : [ "binutils-2_40", "binutils-2_44" ],
+  "deps" : [ "libgmp-dev libmpfr-dev texinfo bison flex" ]
+}

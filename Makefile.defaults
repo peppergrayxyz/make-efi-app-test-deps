@@ -1,0 +1,19 @@
+.DEFAULT_GOAL=all
+
+ARCH	:= $(shell 	uname -m)
+TARGET	:= $(shell basename $(CURDIR))
+BUILDIR :=
+
+SRC		:= src
+BUILD	:= build
+INSTALL	:= install
+PACKAGE	:= package
+JOBS    := $(shell nproc)
+CLEAN   := clean
+CONFARGS:=
+MAKEARGS:=
+INSTARGS:=
+
+ifndef VERBOSE
+MAKEFLAGS += --no-print-directory
+endif

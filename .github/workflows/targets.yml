@@ -1,0 +1,31 @@
+name: Continuous Integration
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  generate-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        run: |
+          set -euo pipefail
+          folders=$(find * -mindepth 0 -maxdepth 0 -type d ! -name '.*' | jq -R . | jq -s -c .)
+          printf 'matrix={"target":%s}' "$folders" | tee -a "$GITHUB_OUTPUT"
+  
+  dispatch:
+    needs:  generate-targets
+    strategy:
+      matrix: ${{ fromJson(needs.generate-targets.outputs.matrix) }}
+  
+    uses: ./.github/workflows/build.yml
+    with:
+      target: ${{ matrix.target }}
